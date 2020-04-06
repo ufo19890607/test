@@ -1,0 +1,106 @@
+From 8e5bfa8c1f8471aa4a2d30be631ef2b50e10abaf Mon Sep 17 00:00:00 2001
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Mon, 14 Nov 2016 19:46:12 +0100
+Subject: [PATCH 2/2] sched/autogroup: Do not use autogroup->tg in zombie
+ threads
+
+Exactly because for_each_thread() in autogroup_move_group() can't see it
+and update its ->sched_task_group before _put() and possibly free().
+
+So the exiting task needs another sched_move_task() before exit_notify()
+and we need to re-introduce the PF_EXITING (or similar) check removed by
+the previous change for another reason.
+
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Mike Galbraith <efault@gmx.de>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: hartsjc@redhat.com
+Cc: vbendel@redhat.com
+Cc: vlovejoy@redhat.com
+Link: http://lkml.kernel.org/r/20161114184612.GA15968@redhat.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+---
+ include/linux/sched.h     |  2 ++
+ kernel/exit.c             |  1 +
+ kernel/sched/auto_group.c | 19 +++++++++++++++++++
+ 3 files changed, 22 insertions(+)
+
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 348f51b0ec92..e9c009dc3a4a 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -2567,6 +2567,7 @@ extern void sched_autogroup_create_attach(struct task_struct *p);
+ extern void sched_autogroup_detach(struct task_struct *p);
+ extern void sched_autogroup_fork(struct signal_struct *sig);
+ extern void sched_autogroup_exit(struct signal_struct *sig);
++extern void sched_autogroup_exit_task(struct task_struct *p);
+ #ifdef CONFIG_PROC_FS
+ extern void proc_sched_autogroup_show_task(struct task_struct *p, struct seq_file *m);
+ extern int proc_sched_autogroup_set_nice(struct task_struct *p, int nice);
+@@ -2576,6 +2577,7 @@ static inline void sched_autogroup_create_attach(struct task_struct *p) { }
+ static inline void sched_autogroup_detach(struct task_struct *p) { }
+ static inline void sched_autogroup_fork(struct signal_struct *sig) { }
+ static inline void sched_autogroup_exit(struct signal_struct *sig) { }
++static inline void sched_autogroup_exit_task(struct task_struct *p) { }
+ #endif
+ 
+ extern int yield_to(struct task_struct *p, bool preempt);
+diff --git a/kernel/exit.c b/kernel/exit.c
+index 9d68c45ebbe3..3076f3089919 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -836,6 +836,7 @@ void __noreturn do_exit(long code)
+ 	 */
+ 	perf_event_exit_task(tsk);
+ 
++	sched_autogroup_exit_task(tsk);
+ 	cgroup_exit(tsk);
+ 
+ 	/*
+diff --git a/kernel/sched/auto_group.c b/kernel/sched/auto_group.c
+index ad2b19ad6ca0..f1c8fd566246 100644
+--- a/kernel/sched/auto_group.c
++++ b/kernel/sched/auto_group.c
+@@ -115,10 +115,26 @@ bool task_wants_autogroup(struct task_struct *p, struct task_group *tg)
+ 	 * If we race with autogroup_move_group() the caller can use the old
+ 	 * value of signal->autogroup but in this case sched_move_task() will
+ 	 * be called again before autogroup_kref_put().
++	 *
++	 * However, there is no way sched_autogroup_exit_task() could tell us
++	 * to avoid autogroup->tg, so we abuse PF_EXITING flag for this case.
+ 	 */
++	if (p->flags & PF_EXITING)
++		return false;
++
+ 	return true;
+ }
+ 
++void sched_autogroup_exit_task(struct task_struct *p)
++{
++	/*
++	 * We are going to call exit_notify() and autogroup_move_group() can't
++	 * see this thread after that: we can no longer use signal->autogroup.
++	 * See the PF_EXITING check in task_wants_autogroup().
++	 */
++	sched_move_task(p);
++}
++
+ static void
+ autogroup_move_group(struct task_struct *p, struct autogroup *ag)
+ {
+@@ -142,6 +158,9 @@ autogroup_move_group(struct task_struct *p, struct autogroup *ag)
+ 	 * In the latter case for_each_thread() can not miss a migrating thread,
+ 	 * cpu_cgroup_attach() must not be possible after cgroup_exit() and it
+ 	 * can't be removed from thread list, we hold ->siglock.
++	 *
++	 * If an exiting thread was already removed from thread list we rely on
++	 * sched_autogroup_exit_task().
+ 	 */
+ 	for_each_thread(p, t)
+ 		sched_move_task(t);
+-- 
+2.23.0.37.g745f681
+
