@@ -1,0 +1,42 @@
+From 54d6d3039e2d84b6fbfbe59ec57d856371edf0a2 Mon Sep 17 00:00:00 2001
+From: Daniel Bristot de Oliveira <bristot@redhat.com>
+Date: Mon, 29 May 2017 16:24:02 +0200
+Subject: [PATCH 2/3] sched/deadline: Fix dl_bw comment
+
+The sched_dl_entity's dl_bw variable stores the utilization (dl_runtime / dl_period)
+of a task, not its density (dl_runtime / dl_deadline), as the comment says.
+
+Signed-off-by: Daniel Bristot de Oliveira <bristot@redhat.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: Juri Lelli <juri.lelli@arm.com>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Luca Abeni <luca.abeni@santannapisa.it>
+Cc: Mike Galbraith <efault@gmx.de>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Romulo Silva de Oliveira <romulo.deoliveira@ufsc.br>
+Cc: Steven Rostedt <rostedt@goodmis.org>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: Tommaso Cucinotta <tommaso.cucinotta@sssup.it>
+Cc: Xunlei Pang <xpang@redhat.com>
+Link: http://lkml.kernel.org/r/8d05f1ccfd02da1a11bda62494d98f5456c1469a.1495803804.git.bristot@redhat.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+---
+ include/linux/sched.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index f1ead2e88d3d..3113c828483b 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -421,7 +421,7 @@ struct sched_dl_entity {
+ 	u64				dl_runtime;	/* Maximum runtime for each instance	*/
+ 	u64				dl_deadline;	/* Relative deadline of each instance	*/
+ 	u64				dl_period;	/* Separation of two instances (period) */
+-	u64				dl_bw;		/* dl_runtime / dl_deadline		*/
++	u64				dl_bw;		/* dl_runtime / dl_period		*/
+ 
+ 	/*
+ 	 * Actual scheduling parameters. Initialized with the values above,
+-- 
+2.23.0.37.g745f681
+
