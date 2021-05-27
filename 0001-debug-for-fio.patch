@@ -1,0 +1,134 @@
+From 40945b273ad0f8e6aa2640995a72f1170995f388 Mon Sep 17 00:00:00 2001
+From: ufo19890607 <ufo19890607@gmail.com>
+Date: Tue, 25 May 2021 21:26:38 +0800
+Subject: [PATCH] debug for fio
+
+Signed-off-by: ufo19890607 <ufo19890607@gmail.com>
+---
+ 4krr             | 23 +++++++++++++++++++++++
+ backend.c        |  3 +++
+ engines/libaio.c |  3 +++
+ io_u.c           | 19 ++++++++++++++++++-
+ 4 files changed, 47 insertions(+), 1 deletion(-)
+ create mode 100644 4krr
+
+diff --git a/4krr b/4krr
+new file mode 100644
+index 0000000..a0cd03e
+--- /dev/null
++++ b/4krr
+@@ -0,0 +1,23 @@
++[global]
++ioengine=libaio
++direct=1
++thread=0
++norandommap=1
++randrepeat=0
++group_reporting
++log_avg_msec=10
++rw=write
++iomem_align=4096
++bs=4k
++numjobs=1
++iodepth=32
++group_reporting=1
++percentile_list=60:65:70:75:76:77:78:79:80:85:90:95:96:97:98:99:99.50:99.90:99.95:99.99
++#time_based
++#runtime=10
++size=1g
++#write_iops_log=iops
++#write_lat_log=unbinding
++
++[testfile1]
++filename=test
+diff --git a/backend.c b/backend.c
+index 8fec1ce..72e18dd 100644
+--- a/backend.c
++++ b/backend.c
+@@ -422,6 +422,7 @@ static int wait_for_completions(struct thread_data *td, struct timespec *time)
+ 	const int full = queue_full(td);
+ 	int min_evts = 0;
+ 	int ret;
++	//int count = 0;
+ 
+ 	if (td->flags & TD_F_REGROW_LOGS)
+ 		return io_u_quiesce(td);
+@@ -440,6 +441,8 @@ static int wait_for_completions(struct thread_data *td, struct timespec *time)
+ 		ret = io_u_queued_complete(td, min_evts);
+ 		if (ret < 0)
+ 			break;
++		//printf("wait_for_completions: io_u_queued_complete ret = %d, td->cur_depth = %d, count = %d\n", ret, td->cur_depth, count);
++		//count++;
+ 	} while (full && (td->cur_depth > td->o.iodepth_low));
+ 
+ 	return ret;
+diff --git a/engines/libaio.c b/engines/libaio.c
+index 7ac36b2..adbd366 100644
+--- a/engines/libaio.c
++++ b/engines/libaio.c
+@@ -216,6 +216,7 @@ static enum fio_q_status fio_libaio_queue(struct thread_data *td,
+ 	ld->io_us[ld->head] = io_u;
+ 	ring_inc(ld, &ld->head, 1);
+ 	ld->queued++;
++	//printf("fio_libaio_queue ld->queued=%u\n", ld->queued);
+ 	return FIO_Q_QUEUED;
+ }
+ 
+@@ -235,6 +236,7 @@ static void fio_libaio_queued(struct thread_data *td, struct io_u **io_us,
+ 
+ 		memcpy(&io_u->issue_time, &now, sizeof(now));
+ 		io_u_queued(td, io_u);
++		//printf("fio_libaio_queued i = %u\n", i);
+ 	}
+ }
+ 
+@@ -257,6 +259,7 @@ static int fio_libaio_commit(struct thread_data *td)
+ 		iocbs = ld->iocbs + ld->tail;
+ 
+ 		ret = io_submit(ld->aio_ctx, nr, iocbs);
++		//printf("fio_libaio_commit ret_io_submit = %d\n", ret);
+ 		if (ret > 0) {
+ 			fio_libaio_queued(td, io_us, ret);
+ 			io_u_mark_submit(td, ret);
+diff --git a/io_u.c b/io_u.c
+index a3540d1..e9ec3d1 100644
+--- a/io_u.c
++++ b/io_u.c
+@@ -2075,16 +2075,33 @@ int io_u_queued_complete(struct thread_data *td, int min_evts)
+ 	return ret;
+ }
+ 
++unsigned long long start_times[262144];
++unsigned long long issue_times[262144];
++unsigned idx = 0;
+ /*
+  * Call when io_u is really queued, to update the submission latency.
+  */
+ void io_u_queued(struct thread_data *td, struct io_u *io_u)
+ {
++	unsigned i;
++	unsigned long long totals = 0;
++
+ 	if (!td->o.disable_slat && ramp_time_over(td) && td->o.stats) {
+ 		unsigned long slat_time;
+ 
+ 		slat_time = ntime_since(&io_u->start_time, &io_u->issue_time);
+-
++		start_times[idx] = io_u->start_time.tv_nsec + io_u->start_time.tv_sec * 1000000000ULL;
++		issue_times[idx] = io_u->issue_time.tv_nsec + io_u->issue_time.tv_sec * 1000000000ULL;
++		idx++;
++		if (idx > 262143) {
++			for (i = 1; i < idx; i ++) {
++				totals += start_times[i] -  issue_times[i-1];
++			}
++			printf("avg interval between issue_time and start_time is %llu, totals=%llu\n", totals / (idx - 1), totals);
++		}
++		//printf("io_u->start_time: sec=%lld, nsec=%lld\nio_u->issue_time: sec=%lld, nsec=%lld\n",
++			//io_u->start_time.tv_sec, io_u->start_time.tv_nsec,
++			//io_u->issue_time.tv_sec, io_u->issue_time.tv_nsec);
+ 		if (td->parent)
+ 			td = td->parent;
+ 
+-- 
+1.8.3.1
+
